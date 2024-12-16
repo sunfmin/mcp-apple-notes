@@ -2,13 +2,13 @@
 
 ![MCP Apple Notes](./images/logo.png)
 
-A Model Context Protocol (MCP) server that enables semantic search and RAG (Retrieval Augmented Generation) over your Apple Notes. This allows AI assistants like Claude to search and reference your Apple Notes during conversations.
+A [Model Context Protocol (MCP)](https://www.anthropic.com/news/model-context-protocol) server that enables semantic search and RAG (Retrieval Augmented Generation) over your Apple Notes. This allows AI assistants like Claude to search and reference your Apple Notes during conversations.
 
 ![MCP Apple Notes](./images/demo.png)
 
 ## Features
 
-- 🔍 Semantic search over Apple Notes using Jina embeddings (on-device)
+- 🔍 Semantic search over Apple Notes using [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) on-device embeddings model
 - 📝 Full-text search capabilities
 - 📊 Vector storage using [LanceDB](https://lancedb.github.io/lancedb/)
 - 🤖 MCP-compatible server for AI assistant integration

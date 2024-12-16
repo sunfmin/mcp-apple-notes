@@ -98,7 +98,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "index-notes",
-        description: "Index all my Apple Notes for Semantic Search",
+        description:
+          "Index all my Apple Notes for Semantic Search. Please tell the user that the sync takes couple of seconds up to couple of minutes depending on how many notes you have.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -245,31 +246,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
       const { query } = QueryNotesSchema.parse(args);
 
       const [vectorResults, ftsSearchResults] = await Promise.all([
-        notesTable
-          .search(query, "vector")
-          .limit(20)
-          .toArray()
-          .then((results) =>
-            results.map((n) => ({
-              content: n.content,
-              title: n.title,
-            }))
-          ),
-        notesTable
-          .search(query, "fts")
-          .limit(20)
-          .toArray()
-          .then((results) =>
-            results.map((n) => ({
-              content: n.content,
-              title: n.title,
-            }))
-          ),
+        notesTable.search(query, "vector").limit(20).toArray(),
+        notesTable.search(query, "fts").limit(20).toArray(),
       ]);
 
-      return createTextResponse(
-        JSON.stringify([...vectorResults, ...ftsSearchResults])
-      );
+      const k = 60; // constant for RRF calculation
+      const scores = new Map<string, number>();
+
+      const processResults = (results: any[], startRank: number) => {
+        results.forEach((result, idx) => {
+          const key = `${result.title}::${result.content}`;
+          const score = 1 / (k + startRank + idx);
+          scores.set(key, (scores.get(key) || 0) + score);
+        });
+      };
+
+      processResults(vectorResults, 0);
+      processResults(ftsSearchResults, 0);
+
+      const combinedResults = Array.from(scores.entries())
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 20)
+        .map(([key]) => {
+          const [title, content] = key.split("::");
+          return { title, content };
+        });
+
+      return createTextResponse(JSON.stringify(combinedResults));
     } else {
       throw new Error(`Unknown tool: ${name}`);
     }
