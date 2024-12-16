@@ -71,3 +71,8 @@ tail -n 50 -f ~/Library/Logs/Claude/mcp-server-local-machine.log
 # or
 tail -n 50 -f ~/Library/Logs/Claude/mcp.log
 ```
+
+## Todos
+
+- [ ] Apple notes are returned in the HTML format. We should turn them to Markdown and embed that
+- [ ] Chunk source content using recursive text splitter or markdown text splitter
