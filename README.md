@@ -76,3 +76,6 @@ tail -n 50 -f ~/Library/Logs/Claude/mcp.log
 
 - [ ] Apple notes are returned in the HTML format. We should turn them to Markdown and embed that
 - [ ] Chunk source content using recursive text splitter or markdown text splitter
+- [ ] Add an option to use custom embeddings model
+- [ ] More control over DB - purge, custom queries, etc.
+- [ ] Storing notes in Notes via Claude

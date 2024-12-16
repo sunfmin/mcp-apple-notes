@@ -1,3 +1,4 @@
+// Usage: npx tsx index.test.ts
 import { test, describe } from "node:test";
 import assert from "node:assert";
 import * as lancedb from "@lancedb/lancedb";
@@ -5,7 +6,12 @@ import path from "node:path";
 import os from "node:os";
 import { LanceSchema } from "@lancedb/lancedb/embedding";
 import { Utf8 } from "apache-arrow";
-import { indexNotes, OnDeviceEmbeddingFunction } from "./index";
+import {
+  createNotesTable,
+  indexNotes,
+  OnDeviceEmbeddingFunction,
+  searchAndCombineResults,
+} from "./index";
 
 describe("Apple Notes Indexing", async () => {
   const db = await lancedb.connect(
@@ -22,7 +28,7 @@ describe("Apple Notes Indexing", async () => {
   });
 
   test("should create notes table", async () => {
-    const notesTable = await db.createEmptyTable("notes", notesSchema, {
+    const notesTable = await db.createEmptyTable("test-notes", notesSchema, {
       mode: "create",
       existOk: true,
     });
@@ -33,10 +39,7 @@ describe("Apple Notes Indexing", async () => {
   });
 
   test("should index all notes correctly", async () => {
-    const notesTable = await db.createEmptyTable("test-notes", notesSchema, {
-      mode: "create",
-      existOk: true,
-    });
+    const { notesTable } = await createNotesTable("test-notes");
 
     await indexNotes(notesTable);
 
@@ -46,10 +49,10 @@ describe("Apple Notes Indexing", async () => {
   });
 
   test("should perform vector search", async () => {
-    const notesTable = await db.createEmptyTable("notes", notesSchema, {
-      mode: "create",
-      existOk: true,
-    });
+    const start = performance.now();
+    const { notesTable } = await createNotesTable("test-notes");
+    const end = performance.now();
+    console.log(`Creating table took ${Math.round(end - start)}ms`);
 
     await notesTable.add([
       {
@@ -61,10 +64,22 @@ describe("Apple Notes Indexing", async () => {
       },
     ]);
 
-    const results = await notesTable
-      .search("test note", "vector")
-      .limit(1)
-      .toArray();
+    const addEnd = performance.now();
+    console.log(`Adding notes took ${Math.round(addEnd - end)}ms`);
+
+    const results = await searchAndCombineResults(notesTable, "test note");
+
+    const combineEnd = performance.now();
+    console.log(`Combining results took ${Math.round(combineEnd - addEnd)}ms`);
+
+    assert.ok(results.length > 0, "Should return search results");
+    assert.equal(results[0].title, "Test Note", "Should find the test note");
+  });
+
+  test("should perform vector search on real indexed data", async () => {
+    const { notesTable } = await createNotesTable("test-notes");
+
+    const results = await searchAndCombineResults(notesTable, "15/12");
 
     assert.ok(results.length > 0, "Should return search results");
     assert.equal(results[0].title, "Test Note", "Should find the test note");

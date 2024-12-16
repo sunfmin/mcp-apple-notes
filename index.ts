@@ -40,7 +40,6 @@ export class OnDeviceEmbeddingFunction extends EmbeddingFunction<string> {
   }
   async computeQueryEmbeddings(data: string) {
     const output = await extractor(data, { pooling: "mean" });
-
     return output.data as number[];
   }
   async computeSourceEmbeddings(data: string[]) {
@@ -174,6 +173,7 @@ const getNoteDetailsByTitle = async (title: string) => {
 };
 
 export const indexNotes = async (notesTable: any) => {
+  const start = performance.now();
   let report = "";
   const allNotes = (await getNotes()) || [];
   const notesDetails = await Promise.all(
@@ -209,18 +209,38 @@ export const indexNotes = async (notesTable: any) => {
 
   await notesTable.add(chunks);
 
-  return { chunks: chunks.length, report, allNotes: allNotes.length };
+  return {
+    chunks: chunks.length,
+    report,
+    allNotes: allNotes.length,
+    time: performance.now() - start,
+  };
+};
+
+export const createNotesTable = async (overrideName?: string) => {
+  const start = performance.now();
+  const notesTable = await db.createEmptyTable(
+    overrideName || "notes",
+    notesTableSchema,
+    {
+      mode: "create",
+      existOk: true,
+    }
+  );
+
+  const indices = await notesTable.listIndices();
+  if (!indices.find((index) => index.name === "content_idx")) {
+    await notesTable.createIndex("content", {
+      config: lancedb.Index.fts(),
+      replace: true,
+    });
+  }
+  return { notesTable, time: performance.now() - start };
 };
 
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
-  const notesTable = await db.createEmptyTable("notes", notesTableSchema, {
-    mode: "create",
-    existOk: true,
-  });
-  await notesTable.createIndex("content", {
-    config: lancedb.Index.fts(),
-  });
+  const { notesTable } = await createNotesTable();
   const { name, arguments: args } = request.params;
 
   try {
@@ -238,40 +258,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
         return createTextResponse(error.message);
       }
     } else if (name === "index-notes") {
-      const count = await indexNotes(notesTable);
+      const { time, chunks, report, allNotes } = await indexNotes(notesTable);
       return createTextResponse(
-        `Indexed ${count} notes! You can now search for them using the "search-notes" tool.`
+        `Indexed ${chunks} notes chunks in ${time}ms. You can now search for them using the "search-notes" tool.`
       );
     } else if (name === "search-notes") {
       const { query } = QueryNotesSchema.parse(args);
-
-      const [vectorResults, ftsSearchResults] = await Promise.all([
-        notesTable.search(query, "vector").limit(20).toArray(),
-        notesTable.search(query, "fts").limit(20).toArray(),
-      ]);
-
-      const k = 60; // constant for RRF calculation
-      const scores = new Map<string, number>();
-
-      const processResults = (results: any[], startRank: number) => {
-        results.forEach((result, idx) => {
-          const key = `${result.title}::${result.content}`;
-          const score = 1 / (k + startRank + idx);
-          scores.set(key, (scores.get(key) || 0) + score);
-        });
-      };
-
-      processResults(vectorResults, 0);
-      processResults(ftsSearchResults, 0);
-
-      const combinedResults = Array.from(scores.entries())
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 20)
-        .map(([key]) => {
-          const [title, content] = key.split("::");
-          return { title, content };
-        });
-
+      const combinedResults = await searchAndCombineResults(notesTable, query);
       return createTextResponse(JSON.stringify(combinedResults));
     } else {
       throw new Error(`Unknown tool: ${name}`);
@@ -296,3 +289,54 @@ console.error("Local Machine MCP Server running on stdio");
 const createTextResponse = (text: string) => ({
   content: [{ type: "text", text }],
 });
+
+/**
+ * Search for notes by title or content using both vector and FTS search.
+ * The results are combined using RRF
+ */
+export const searchAndCombineResults = async (
+  notesTable: lancedb.Table,
+  query: string,
+  limit = 20
+) => {
+  const [vectorResults, ftsSearchResults] = await Promise.all([
+    (async () => {
+      const results = await notesTable
+        .search(query, "vector")
+        .limit(limit)
+        .toArray();
+      return results;
+    })(),
+    (async () => {
+      const results = await notesTable
+        .search(query, "fts", "content")
+        .limit(limit)
+        .toArray();
+      return results;
+    })(),
+  ]);
+
+  const k = 60;
+  const scores = new Map<string, number>();
+
+  const processResults = (results: any[], startRank: number) => {
+    results.forEach((result, idx) => {
+      const key = `${result.title}::${result.content}`;
+      const score = 1 / (k + startRank + idx);
+      scores.set(key, (scores.get(key) || 0) + score);
+    });
+  };
+
+  processResults(vectorResults, 0);
+  processResults(ftsSearchResults, 0);
+
+  const results = Array.from(scores.entries())
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, limit)
+    .map(([key]) => {
+      const [title, content] = key.split("::");
+      return { title, content };
+    });
+
+  return results;
+};
