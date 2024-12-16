@@ -3,8 +3,8 @@ import assert from "node:assert";
 import * as lancedb from "@lancedb/lancedb";
 import path from "node:path";
 import os from "node:os";
-import { LanceSchema, register } from "@lancedb/lancedb/embedding";
-import { Float32, Utf8 } from "apache-arrow";
+import { LanceSchema } from "@lancedb/lancedb/embedding";
+import { Utf8 } from "apache-arrow";
 import { indexNotes, OnDeviceEmbeddingFunction } from "./index";
 
 describe("Apple Notes Indexing", async () => {

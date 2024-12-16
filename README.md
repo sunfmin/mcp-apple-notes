@@ -39,7 +39,7 @@ bun install
 
 1. Open Claude desktop app and go to Settings -> Developer -> Edit Config
 
-![Claude Desktop Settings](./images/desktop-settings.png)
+![Claude Desktop Settings](./images/desktop_settings.png)
 
 2. Open the `claude_desktop_config.json` and add the following entry:
 
@@ -58,7 +58,7 @@ Important: Replace `<YOUR_USER_NAME>` with your actual username.
 
 3. Restart Claude desktop app. You should see this:
 
-![Claude MCP Connection Status](./images/verify-installation.png)
+![Claude MCP Connection Status](./images/verify_installation.png)
 
 4. Start by indexing your notes. Ask Claude to index your notes by saying something like: "Index my notes" or "Index my Apple Notes".
 
