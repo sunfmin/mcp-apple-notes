@@ -78,4 +78,4 @@ tail -n 50 -f ~/Library/Logs/Claude/mcp.log
 - [ ] Chunk source content using recursive text splitter or markdown text splitter
 - [ ] Add an option to use custom embeddings model
 - [ ] More control over DB - purge, custom queries, etc.
-- [ ] Storing notes in Notes via Claude
+- [x] Storing notes in Notes via Claude
