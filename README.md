@@ -48,7 +48,7 @@ bun install
   "mcpServers": {
     "local-machine": {
       "command": "/Users/<YOUR_USER_NAME>/.bun/bin/bun",
-      "args": ["/Users/<YOUR_USER_NAME>/apple-notes-mcp/dist/index.js"]
+      "args": ["/Users/<YOUR_USER_NAME>/apple-notes-mcp/index.ts"]
     }
   }
 }
