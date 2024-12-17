@@ -127,6 +127,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["query"],
         },
       },
+      {
+        name: "create-note",
+        description:
+          "Create a new Apple Note with specified title and content. Must be in HTML format WITHOUT newlines",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            content: { type: "string" },
+          },
+          required: ["title", "content"],
+        },
+      },
     ],
   };
 });
@@ -238,13 +251,38 @@ export const createNotesTable = async (overrideName?: string) => {
   return { notesTable, time: performance.now() - start };
 };
 
+const createNote = async (title: string, content: string) => {
+  // Escape special characters and convert newlines to \n
+  const escapedTitle = title.replace(/[\\'"]/g, "\\$&");
+  const escapedContent = content
+    .replace(/[\\'"]/g, "\\$&")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "");
+
+  await runJxa(`
+    const app = Application('Notes');
+    const note = app.make({new: 'note', withProperties: {
+      name: "${escapedTitle}",
+      body: "${escapedContent}"
+    }});
+    
+    return true
+  `);
+
+  return true;
+};
+
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
   const { notesTable } = await createNotesTable();
   const { name, arguments: args } = request.params;
 
   try {
-    if (name === "list-notes") {
+    if (name === "create-note") {
+      const { title, content } = CreateNoteSchema.parse(args);
+      await createNote(title, content);
+      return createTextResponse(`Created note "${title}" successfully.`);
+    } else if (name === "list-notes") {
       return createTextResponse(
         `There are ${await notesTable.countRows()} notes in your Apple Notes database.`
       );
@@ -340,3 +378,8 @@ export const searchAndCombineResults = async (
 
   return results;
 };
+
+const CreateNoteSchema = z.object({
+  title: z.string(),
+  content: z.string(),
+});

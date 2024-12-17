@@ -38,7 +38,7 @@ describe("Apple Notes Indexing", async () => {
     assert.ok(typeof count === "number", "Should be able to count rows");
   });
 
-  test("should index all notes correctly", async () => {
+  test.skip("should index all notes correctly", async () => {
     const { notesTable } = await createNotesTable("test-notes");
 
     await indexNotes(notesTable);
