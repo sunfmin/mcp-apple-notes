@@ -73,7 +73,7 @@ const GetNoteSchema = z.object({
 
 const server = new Server(
   {
-    name: "my-apple-notes-mcp",
+    name: "apple-notes",
     version: "1.0.0",
   },
   {
@@ -96,6 +96,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "list_notes",
+        description: "Lists just the titles of all my Apple Notes",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+      {
         name: "index-notes",
         description:
           "Index all my Apple Notes for Semantic Search. Please tell the user that the sync takes couple of seconds up to couple of minutes depending on how many notes you have.",
@@ -106,7 +115,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "index_notes",
+        description:
+          "Index all my Apple Notes for Semantic Search. Please tell the user that the sync takes couple of seconds up to couple of minutes depending on how many notes you have.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+      {
         name: "get-note",
+        description: "Get a note full content and details by title",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: z.string(),
+          },
+          required: ["title"],
+        },
+      },
+      {
+        name: "get_note",
         description: "Get a note full content and details by title",
         inputSchema: {
           type: "object",
@@ -128,7 +158,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "search_notes",
+        description: "Search for notes by title or content",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: z.string(),
+          },
+          required: ["query"],
+        },
+      },
+      {
         name: "create-note",
+        description:
+          "Create a new Apple Note with specified title and content. Must be in HTML format WITHOUT newlines",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            content: { type: "string" },
+          },
+          required: ["title", "content"],
+        },
+      },
+      {
+        name: "create_note",
         description:
           "Create a new Apple Note with specified title and content. Must be in HTML format WITHOUT newlines",
         inputSchema: {
@@ -277,16 +331,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
   const { notesTable } = await createNotesTable();
   const { name, arguments: args } = request.params;
 
+  // Normalize the tool name by replacing underscores with hyphens
+  const normalizedName = name.replace(/_/g, "-");
+
   try {
-    if (name === "create-note") {
+    if (normalizedName === "create-note") {
       const { title, content } = CreateNoteSchema.parse(args);
       await createNote(title, content);
       return createTextResponse(`Created note "${title}" successfully.`);
-    } else if (name === "list-notes") {
+    } else if (normalizedName === "list-notes") {
       return createTextResponse(
         `There are ${await notesTable.countRows()} notes in your Apple Notes database.`
       );
-    } else if (name == "get-note") {
+    } else if (normalizedName === "get-note") {
       try {
         const { title } = GetNoteSchema.parse(args);
         const note = await getNoteDetailsByTitle(title);
@@ -295,12 +352,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
       } catch (error) {
         return createTextResponse(error.message);
       }
-    } else if (name === "index-notes") {
+    } else if (normalizedName === "index-notes") {
       const { time, chunks, report, allNotes } = await indexNotes(notesTable);
       return createTextResponse(
         `Indexed ${chunks} notes chunks in ${time}ms. You can now search for them using the "search-notes" tool.`
       );
-    } else if (name === "search-notes") {
+    } else if (normalizedName === "search-notes") {
       const { query } = QueryNotesSchema.parse(args);
       const combinedResults = await searchAndCombineResults(notesTable, query);
       return createTextResponse(JSON.stringify(combinedResults));
@@ -322,7 +379,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
 // Start the server
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error("Local Machine MCP Server running on stdio");
+console.error("Apple Notes MCP Server running on stdio");
 
 const createTextResponse = (text: string) => ({
   content: [{ type: "text", text }],
