@@ -109,7 +109,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "index_notes",
         description:
-          "Index all my Apple Notes for Semantic Search. Please tell the user that the sync takes couple of seconds up to couple of minutes depending on how many notes you have.",
+          "Synchronize all my Apple Notes for Semantic Search. This updates the search database to match your current notes. Please tell the user that the sync takes a few seconds to a few minutes depending on how many notes they have.",
         inputSchema: {
           type: "object",
           properties: {
@@ -202,6 +202,19 @@ export const indexNotes = async (notesTable: any) => {
   const start = performance.now();
   let report = "";
   try {
+    // Clear existing records to prevent duplicates
+    console.log("Clearing existing notes from table...");
+    const clearStart = performance.now();
+    try {
+      // Delete all records from the table
+      await notesTable.delete("true");
+      const clearEnd = performance.now();
+      console.log(`Cleared existing records in ${Math.round(clearEnd - clearStart)}ms`);
+    } catch (error) {
+      report += `Warning: Failed to clear existing records: ${error.message}. Will proceed with indexing.\n`;
+      console.warn("Failed to clear existing records:", error);
+    }
+
     const allNotes = (await getNotes()) || [];
     const notesDetails = await Promise.all(
       allNotes.map(async (note) => {
@@ -358,7 +371,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
       const params = RandomStringSchema.parse(args || {});
       const { time, chunks, report, allNotes } = await indexNotes(notesTable);
       return createTextResponse(
-        `Indexed ${chunks} notes chunks in ${time}ms. You can now search for them using the "search_notes" tool.`
+        `Synchronized Apple Notes with search database: indexed ${chunks} notes in ${Math.round(time)}ms. You can now search for them using the "search_notes" tool.`
       );
     } else if (name === "search_notes") {
       const { query } = QueryNotesSchema.parse(args);
