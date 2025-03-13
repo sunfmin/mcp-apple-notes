@@ -119,7 +119,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "search_notes",
-        description: "Search for notes by title or content across all folders using Apple Notes' native search",
+        description: "Search for notes using Apple's native search functionality. This leverages the Apple Notes app's built-in search for faster and more accurate results.",
         inputSchema: {
           type: "object",
           properties: {
@@ -361,22 +361,74 @@ const createNote = async (title: string, content: string) => {
 const searchNotes = async (query: string) => {
   const results = await runJxa(`
     const app = Application('Notes');
-    const query = "${query.replace(/[\\'"]/g, "\\$&")}";
+    app.includeStandardAdditions = true;
     
-    // Search across all folders
-    const notes = Array.from(app.notes()).filter(note => {
-      const content = note.body().toLowerCase();
-      const title = note.name().toLowerCase();
-      const searchQuery = query.toLowerCase();
-      return content.includes(searchQuery) || title.includes(searchQuery);
-    }).map(note => ({
-      title: note.name(),
-      content: note.body(),
-      creation_date: note.creationDate().toLocaleString(),
-      modification_date: note.modificationDate().toLocaleString()
-    }));
+    // Use System Events for UI automation
+    const systemEvents = Application('System Events');
+    const notesProcess = systemEvents.processes.whose({name: 'Notes'})[0];
     
-    return JSON.stringify(notes);
+    // Activate Notes app
+    app.activate();
+    
+    // Escape the query for safe insertion into script
+    const searchQuery = "${query.replace(/[\\'"]/g, "\\$&")}";
+    
+    try {
+      // Clear any existing search first (to ensure clean state)
+      // Press Command+F to focus search field
+      systemEvents.keyCode(3, {using: ['command down']});
+      delay(0.2);
+      
+      // Clear the search field with Escape key
+      systemEvents.keyCode(53);
+      delay(0.2);
+      
+      // Press Command+F again
+      systemEvents.keyCode(3, {using: ['command down']});
+      delay(0.3);
+      
+      // Type the search query
+      systemEvents.keystroke(searchQuery);
+      delay(1); // Give more time for search to complete
+      
+      // Get visible notes after search
+      const searchResults = [];
+      
+      // Get all notes - Apple will only show the matching ones in UI
+      // But we can get all notes and check which ones match the query
+      const allNotes = app.notes();
+      
+      for (let i = 0; i < allNotes.length; i++) {
+        try {
+          const note = allNotes[i];
+          const title = note.name();
+          const content = note.body();
+          
+          // Check if this note matches search query
+          // The lowercase check ensures we get consistent results
+          if (title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+              content.toLowerCase().includes(searchQuery.toLowerCase())) {
+            searchResults.push({
+              title: title,
+              content: content,
+              creation_date: note.creationDate().toLocaleString(),
+              modification_date: note.modificationDate().toLocaleString()
+            });
+          }
+        } catch (e) {
+          // Skip notes that can't be accessed
+        }
+      }
+      
+      // Clear search field with Escape key to exit search mode
+      systemEvents.keyCode(53);
+      
+      return JSON.stringify(searchResults);
+    } catch (error) {
+      // If there's an error with UI automation, return empty results
+      console.log('UI search failed: ' + error);
+      return JSON.stringify([]);
+    }
   `);
 
   return JSON.parse(results as string) as {

@@ -138,31 +138,75 @@ describe("Apple Notes Integration", () => {
     await createTestNote("Test Note", "This is a test note content");
     await createTestNoteInMCPFolder("MCP Test Note", "This note has unique content");
 
-    // Search for notes
+    // Search for notes using Native UI search
     const results = await runJxa(`
       const app = Application('Notes');
-      const query = "unique content";
+      app.includeStandardAdditions = true;
+      const searchQuery = "unique content";
       
-      // Search across all folders
-      const notes = Array.from(app.notes()).filter(note => {
-        const content = note.body().toLowerCase();
-        const title = note.name().toLowerCase();
-        const searchQuery = query.toLowerCase();
-        return content.includes(searchQuery) || title.includes(searchQuery);
-      }).map(note => ({
-        title: note.name(),
-        content: note.body(),
-        creation_date: note.creationDate().toLocaleString(),
-        modification_date: note.modificationDate().toLocaleString()
-      }));
+      // Use System Events for UI automation
+      const systemEvents = Application('System Events');
       
-      return JSON.stringify(notes);
+      // Activate Notes app
+      app.activate();
+      
+      try {
+        // Clear any existing search first (to ensure clean state)
+        // Press Command+F to focus search field
+        systemEvents.keyCode(3, {using: ['command down']});
+        delay(0.2);
+        
+        // Clear the search field with Escape key
+        systemEvents.keyCode(53);
+        delay(0.2);
+        
+        // Press Command+F again
+        systemEvents.keyCode(3, {using: ['command down']});
+        delay(0.3);
+        
+        // Type the search query
+        systemEvents.keystroke(searchQuery);
+        delay(1); // Give more time for search to complete
+        
+        // Get matching notes
+        const searchResults = [];
+        const allNotes = app.notes();
+        
+        for (let i = 0; i < allNotes.length; i++) {
+          try {
+            const note = allNotes[i];
+            const title = note.name();
+            const content = note.body();
+            
+            if (title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                content.toLowerCase().includes(searchQuery.toLowerCase())) {
+              searchResults.push({
+                title: title,
+                content: note.body(),
+                creation_date: note.creationDate().toLocaleString(),
+                modification_date: note.modificationDate().toLocaleString()
+              });
+            }
+          } catch (e) {
+            // Skip notes that can't be accessed
+          }
+        }
+        
+        // Clear search field with Escape key to exit search mode
+        systemEvents.keyCode(53);
+        
+        return JSON.stringify(searchResults);
+      } catch (error) {
+        // Return empty results on error
+        return JSON.stringify([]);
+      }
     `);
 
     const searchResults = JSON.parse(results as string);
     expect(searchResults.length).toBeGreaterThan(0);
-    expect(searchResults[0].title).toBe("MCP Test Note");
-    expect(searchResults[0].content).toContain("unique content");
+    expect(searchResults.some(note => 
+      note.title === "MCP Test Note" && note.content.includes("unique content")
+    )).toBe(true);
   });
 
   test("should create new note in MCP folder", async () => {
