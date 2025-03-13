@@ -1,6 +1,6 @@
-// Usage: npx tsx index.test.ts
-import { test, describe } from "node:test";
-import assert from "node:assert";
+// Usage: bun test --timeout 120000
+/// <reference types="bun-types" />
+import { test, describe, expect } from "bun:test";
 import * as lancedb from "@lancedb/lancedb";
 import path from "node:path";
 import os from "node:os";
@@ -33,19 +33,41 @@ describe("Apple Notes Indexing", async () => {
       existOk: true,
     });
 
-    assert.ok(notesTable, "Notes table should be created");
+    // Notes table should be created
+    expect(notesTable).toBeDefined();
     const count = await notesTable.countRows();
-    assert.ok(typeof count === "number", "Should be able to count rows");
+    // Should be able to count rows
+    expect(typeof count).toBe("number");
   });
 
-  test.skip("should index all notes correctly", async () => {
-    const { notesTable } = await createNotesTable("test-notes");
+  // Note: This test requires a very long timeout due to indexing operations
+  // Run with: bun test --timeout 120000 (2 minutes)
+  test("should index all notes correctly", async () => {
+    console.log("Starting notes indexing test...");
+    
+    const startTableCreation = performance.now();
+    const { notesTable, time: tableCreationTime } = await createNotesTable("test-notes");
+    console.log(`Table creation took ${Math.round(tableCreationTime)}ms`);
 
-    await indexNotes(notesTable);
+    console.log("Beginning notes indexing process...");
+    const startIndexing = performance.now();
+    const indexResult = await indexNotes(notesTable);
+    const endIndexing = performance.now();
+    
+    console.log(`Indexing completed in ${Math.round(endIndexing - startIndexing)}ms`);
+    console.log(`Found ${indexResult.allNotes} notes, indexed ${indexResult.chunks} chunks`);
+    
+    if (indexResult.report) {
+      console.log("Indexing report:", indexResult.report);
+    }
 
     const count = await notesTable.countRows();
-    assert.ok(typeof count === "number", "Should be able to count rows");
-    assert.ok(count > 0, "Should be able to count rows");
+    console.log(`Table contains ${count} rows after indexing`);
+    
+    // Should be able to count rows
+    expect(typeof count).toBe("number");
+    // Should have rows after indexing
+    expect(count).toBeGreaterThan(0);
   });
 
   test("should perform vector search", async () => {
@@ -72,8 +94,10 @@ describe("Apple Notes Indexing", async () => {
     const combineEnd = performance.now();
     console.log(`Combining results took ${Math.round(combineEnd - addEnd)}ms`);
 
-    assert.ok(results.length > 0, "Should return search results");
-    assert.equal(results[0].title, "Test Note", "Should find the test note");
+    // Should return search results
+    expect(results.length).toBeGreaterThan(0);
+    // Should find the test note
+    expect(results[0].title).toBe("Test Note");
   });
 
   test("should perform vector search on real indexed data", async () => {
@@ -81,7 +105,9 @@ describe("Apple Notes Indexing", async () => {
 
     const results = await searchAndCombineResults(notesTable, "15/12");
 
-    assert.ok(results.length > 0, "Should return search results");
-    assert.equal(results[0].title, "Test Note", "Should find the test note");
+    // Should return search results
+    expect(results.length).toBeGreaterThan(0);
+    // Should find the test note
+    expect(results[0].title).toBe("Test Note");
   });
 });

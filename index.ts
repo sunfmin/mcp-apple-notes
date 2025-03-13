@@ -9,7 +9,7 @@ import * as lancedb from "@lancedb/lancedb";
 import { runJxa } from "run-jxa";
 import path from "node:path";
 import os from "node:os";
-import TurndownService from "turndown";
+import { NodeHtmlMarkdown } from "node-html-markdown";
 import {
   EmbeddingFunction,
   LanceSchema,
@@ -18,7 +18,7 @@ import {
 import { type Float, Float32, Utf8 } from "apache-arrow";
 import { pipeline } from "@huggingface/transformers";
 
-const { turndown } = new TurndownService();
+const nhm = new NodeHtmlMarkdown();
 const db = await lancedb.connect(
   path.join(os.homedir(), ".mcp-apple-notes", "data")
 );
@@ -71,6 +71,15 @@ const GetNoteSchema = z.object({
   title: z.string(),
 });
 
+const CreateNoteSchema = z.object({
+  title: z.string(),
+  content: z.string(),
+});
+
+const RandomStringSchema = z.object({
+  random_string: z.string().optional().default("dummy"),
+});
+
 const server = new Server(
   {
     name: "apple-notes",
@@ -87,31 +96,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: "list-notes",
-        description: "Lists just the titles of all my Apple Notes",
-        inputSchema: {
-          type: "object",
-          properties: {},
-          required: [],
-        },
-      },
-      {
         name: "list_notes",
         description: "Lists just the titles of all my Apple Notes",
         inputSchema: {
           type: "object",
-          properties: {},
-          required: [],
-        },
-      },
-      {
-        name: "index-notes",
-        description:
-          "Index all my Apple Notes for Semantic Search. Please tell the user that the sync takes couple of seconds up to couple of minutes depending on how many notes you have.",
-        inputSchema: {
-          type: "object",
-          properties: {},
-          required: [],
+          properties: {
+            random_string: { type: "string", description: "Optional dummy parameter" }
+          },
+          required: []
         },
       },
       {
@@ -120,19 +112,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           "Index all my Apple Notes for Semantic Search. Please tell the user that the sync takes couple of seconds up to couple of minutes depending on how many notes you have.",
         inputSchema: {
           type: "object",
-          properties: {},
-          required: [],
-        },
-      },
-      {
-        name: "get-note",
-        description: "Get a note full content and details by title",
-        inputSchema: {
-          type: "object",
           properties: {
-            title: z.string(),
+            random_string: { type: "string", description: "Optional dummy parameter" }
           },
-          required: ["title"],
+          required: []
         },
       },
       {
@@ -141,20 +124,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            title: z.string(),
+            title: { type: "string" }
           },
           required: ["title"],
-        },
-      },
-      {
-        name: "search-notes",
-        description: "Search for notes by title or content",
-        inputSchema: {
-          type: "object",
-          properties: {
-            query: z.string(),
-          },
-          required: ["query"],
         },
       },
       {
@@ -163,22 +135,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {
-            query: z.string(),
+            query: { type: "string" }
           },
           required: ["query"],
-        },
-      },
-      {
-        name: "create-note",
-        description:
-          "Create a new Apple Note with specified title and content. Must be in HTML format WITHOUT newlines",
-        inputSchema: {
-          type: "object",
-          properties: {
-            title: { type: "string" },
-            content: { type: "string" },
-          },
-          required: ["title", "content"],
         },
       },
       {
@@ -242,46 +201,67 @@ const getNoteDetailsByTitle = async (title: string) => {
 export const indexNotes = async (notesTable: any) => {
   const start = performance.now();
   let report = "";
-  const allNotes = (await getNotes()) || [];
-  const notesDetails = await Promise.all(
-    allNotes.map((note) => {
-      try {
-        return getNoteDetailsByTitle(note);
-      } catch (error) {
-        report += `Error getting note details for ${note}: ${error.message}\n`;
-        return {} as any;
-      }
-    })
-  );
+  try {
+    const allNotes = (await getNotes()) || [];
+    const notesDetails = await Promise.all(
+      allNotes.map(async (note) => {
+        try {
+          return await getNoteDetailsByTitle(note);
+        } catch (error) {
+          report += `Error getting note details for ${note}: ${error.message}\n`;
+          return {} as any;
+        }
+      })
+    );
 
-  const chunks = notesDetails
-    .filter((n) => n.title)
-    .map((node) => {
-      try {
-        return {
-          ...node,
-          content: turndown(node.content || ""), // this sometimes fails
-        };
-      } catch (error) {
-        return node;
-      }
-    })
-    .map((note, index) => ({
-      id: index.toString(),
-      title: note.title,
-      content: note.content, // turndown(note.content || ""),
-      creation_date: note.creation_date,
-      modification_date: note.modification_date,
-    }));
+    const chunks = notesDetails
+      .filter((n) => n.title)
+      .map((node) => {
+        try {
+          return {
+            ...node,
+            content: nhm.translate(node.content || ""),
+          };
+        } catch (error) {
+          report += `Error converting content for ${node.title}: ${error.message}\n`;
+          return node;
+        }
+      })
+      .map((note, index) => ({
+        id: index.toString(),
+        title: note.title,
+        content: note.content,
+        creation_date: note.creation_date,
+        modification_date: note.modification_date,
+      }));
 
-  await notesTable.add(chunks);
+    if (chunks.length === 0) {
+      return {
+        chunks: 0,
+        report: report + "No valid notes found to index.",
+        allNotes: allNotes.length,
+        time: performance.now() - start,
+      };
+    }
 
-  return {
-    chunks: chunks.length,
-    report,
-    allNotes: allNotes.length,
-    time: performance.now() - start,
-  };
+    await notesTable.add(chunks);
+
+    return {
+      chunks: chunks.length,
+      report,
+      allNotes: allNotes.length,
+      time: performance.now() - start,
+    };
+  } catch (error) {
+    report += `Error during indexing: ${error.message}\n`;
+    return {
+      chunks: 0,
+      report,
+      allNotes: 0,
+      time: performance.now() - start,
+      error: error.message,
+    };
+  }
 };
 
 export const createNotesTable = async (overrideName?: string) => {
@@ -331,36 +311,97 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
   const { notesTable } = await createNotesTable();
   const { name, arguments: args } = request.params;
 
-  // Normalize the tool name by replacing underscores with hyphens
-  const normalizedName = name.replace(/_/g, "-");
-
   try {
-    if (normalizedName === "create-note") {
+    if (name === "create_note") {
       const { title, content } = CreateNoteSchema.parse(args);
       await createNote(title, content);
       return createTextResponse(`Created note "${title}" successfully.`);
-    } else if (normalizedName === "list-notes") {
+    } else if (name === "list_notes") {
+      // Validate with optional parameters
+      const params = RandomStringSchema.parse(args || {});
+      const titles = await getNotes();
+      
+      if (!titles || titles.length === 0) {
+        return createTextResponse("You don't have any notes in your Apple Notes database.");
+      }
+      
+      const formattedTitles = titles.map((title, index) => `${index + 1}. ${title}`).join('\n');
       return createTextResponse(
-        `There are ${await notesTable.countRows()} notes in your Apple Notes database.`
+        `You have ${titles.length} notes in your Apple Notes database:\n\n${formattedTitles}`
       );
-    } else if (normalizedName === "get-note") {
+    } else if (name === "get_note") {
       try {
         const { title } = GetNoteSchema.parse(args);
         const note = await getNoteDetailsByTitle(title);
-
-        return createTextResponse(`${note}`);
+        
+        if (!note.title) {
+          return createTextResponse(`Note with title "${title}" not found.`);
+        }
+        
+        // Remove only image tags from HTML content but keep other HTML tags
+        let cleanContent = cleanHtmlContent(note.content);
+        
+        const formattedNote = [
+          `# ${note.title}`,
+          `Created: ${note.creation_date || 'Unknown'}`,
+          `Modified: ${note.modification_date || 'Unknown'}`,
+          '',
+          cleanContent
+        ].join('\n');
+        
+        return createTextResponse(formattedNote);
       } catch (error) {
         return createTextResponse(error.message);
       }
-    } else if (normalizedName === "index-notes") {
+    } else if (name === "index_notes") {
+      // Validate with optional parameters
+      const params = RandomStringSchema.parse(args || {});
       const { time, chunks, report, allNotes } = await indexNotes(notesTable);
       return createTextResponse(
-        `Indexed ${chunks} notes chunks in ${time}ms. You can now search for them using the "search-notes" tool.`
+        `Indexed ${chunks} notes chunks in ${time}ms. You can now search for them using the "search_notes" tool.`
       );
-    } else if (normalizedName === "search-notes") {
+    } else if (name === "search_notes") {
       const { query } = QueryNotesSchema.parse(args);
+      
+      // Ensure the notes table exists even if not indexed yet
+      let exists = false;
+      try {
+        // Use a more reliable method to check if table exists
+        await db.openTable("notes");
+        exists = true;
+      } catch (error) {
+        console.error("Table does not exist:", error);
+        exists = false;
+      }
+      
+      if (!exists) {
+        return createTextResponse(
+          `You need to index your notes first. Please use the "index_notes" tool before searching.`
+        );
+      }
+      
       const combinedResults = await searchAndCombineResults(notesTable, query);
-      return createTextResponse(JSON.stringify(combinedResults));
+      
+      // Format the results in a more readable way
+      if (combinedResults.length === 0) {
+        return createTextResponse(`No results found for query: "${query}"`);
+      }
+      
+      const formattedResults = combinedResults.map((result, index) => {
+        // Remove only image tags but keep other HTML tags
+        const cleanContent = cleanHtmlContent(result.content);
+          
+        // Truncate content if it's too long
+        const truncatedContent = cleanContent.length > 200 
+          ? cleanContent.substring(0, 200) + '...' 
+          : cleanContent;
+          
+        return `${index + 1}. **${result.title || 'Untitled'}**\n   ${truncatedContent}`;
+      }).join('\n\n');
+      
+      return createTextResponse(
+        `Found ${combinedResults.length} notes matching "${query}":\n\n${formattedResults}`
+      );
     } else {
       throw new Error(`Unknown tool: ${name}`);
     }
@@ -386,6 +427,20 @@ const createTextResponse = (text: string) => ({
 });
 
 /**
+ * Cleans HTML content by removing image tags but keeping other HTML formatting
+ * @param content HTML content to clean
+ * @returns Cleaned HTML content with images removed
+ */
+const cleanHtmlContent = (content: string | null | undefined): string => {
+  if (!content) return 'No content';
+  
+  return content
+    .replace(/<img[^>]*>/g, '')  // Remove only image tags
+    .replace(/&nbsp;/g, ' ')     // Replace &nbsp; with spaces
+    .trim();
+};
+
+/**
  * Search for notes by title or content using both vector and FTS search.
  * The results are combined using RRF
  */
@@ -394,49 +449,59 @@ export const searchAndCombineResults = async (
   query: string,
   limit = 20
 ) => {
-  const [vectorResults, ftsSearchResults] = await Promise.all([
-    (async () => {
-      const results = await notesTable
-        .search(query, "vector")
-        .limit(limit)
-        .toArray();
-      return results;
-    })(),
-    (async () => {
-      const results = await notesTable
-        .search(query, "fts", "content")
-        .limit(limit)
-        .toArray();
-      return results;
-    })(),
-  ]);
+  try {
+    const [vectorResults, ftsSearchResults] = await Promise.all([
+      (async () => {
+        try {
+          const results = await notesTable
+            .search(query, "vector")
+            .limit(limit)
+            .toArray();
+          return results;
+        } catch (error) {
+          console.error("Vector search error:", error);
+          return [];
+        }
+      })(),
+      (async () => {
+        try {
+          const results = await notesTable
+            .search(query, "fts", "content")
+            .limit(limit)
+            .toArray();
+          return results;
+        } catch (error) {
+          console.error("FTS search error:", error);
+          return [];
+        }
+      })(),
+    ]);
 
-  const k = 60;
-  const scores = new Map<string, number>();
+    const k = 60;
+    const scores = new Map<string, number>();
 
-  const processResults = (results: any[], startRank: number) => {
-    results.forEach((result, idx) => {
-      const key = `${result.title}::${result.content}`;
-      const score = 1 / (k + startRank + idx);
-      scores.set(key, (scores.get(key) || 0) + score);
-    });
-  };
+    const processResults = (results: any[], startRank: number) => {
+      results.forEach((result, idx) => {
+        const key = `${result.title}::${result.content}`;
+        const score = 1 / (k + startRank + idx);
+        scores.set(key, (scores.get(key) || 0) + score);
+      });
+    };
 
-  processResults(vectorResults, 0);
-  processResults(ftsSearchResults, 0);
+    processResults(vectorResults, 0);
+    processResults(ftsSearchResults, 0);
 
-  const results = Array.from(scores.entries())
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, limit)
-    .map(([key]) => {
-      const [title, content] = key.split("::");
-      return { title, content };
-    });
+    const results = Array.from(scores.entries())
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, limit)
+      .map(([key]) => {
+        const [title, content] = key.split("::");
+        return { title, content };
+      });
 
-  return results;
+    return results;
+  } catch (error) {
+    console.error("Search error:", error);
+    return [];
+  }
 };
-
-const CreateNoteSchema = z.object({
-  title: z.string(),
-  content: z.string(),
-});
