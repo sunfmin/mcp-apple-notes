@@ -97,19 +97,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "list_notes",
-        description: "Lists just the titles of all my Apple Notes",
-        inputSchema: {
-          type: "object",
-          properties: {
-            random_string: { type: "string", description: "Optional dummy parameter" }
-          },
-          required: []
-        },
-      },
-      {
-        name: "index_notes",
-        description:
-          "Synchronize all my Apple Notes for Semantic Search. This updates the search database to match your current notes. Please tell the user that the sync takes a few seconds to a few minutes depending on how many notes they have.",
+        description: "Lists just the titles of all my Apple Notes from all folders",
         inputSchema: {
           type: "object",
           properties: {
@@ -120,7 +108,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "get_note",
-        description: "Get a note full content and details by title",
+        description: "Get a note full content and details by title from any folder",
         inputSchema: {
           type: "object",
           properties: {
@@ -131,7 +119,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "search_notes",
-        description: "Search for notes by title or content",
+        description: "Search for notes by title or content across all folders using Apple Notes' native search",
         inputSchema: {
           type: "object",
           properties: {
@@ -143,7 +131,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "create_note",
         description:
-          "Create a new Apple Note with specified title and content. Must be in HTML format WITHOUT newlines",
+          "Create a new Apple Note with specified title and content. The note will be created in the 'MCP Notes' folder. Must be in HTML format WITHOUT newlines",
         inputSchema: {
           type: "object",
           properties: {
@@ -160,10 +148,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 const getNotes = async () => {
   const notes = await runJxa(`
     const app = Application('Notes');
-app.includeStandardAdditions = true;
-const notes = Array.from(app.notes());
-const titles = notes.map(note => note.properties().name);
-return titles;
+    app.includeStandardAdditions = true;
+    
+    // Get all notes across all folders
+    const notes = Array.from(app.notes());
+    const titles = notes.map(note => note.properties().name);
+    return titles;
   `);
 
   return notes as string[];
@@ -172,10 +162,15 @@ return titles;
 const getNoteDetailsByTitle = async (title: string) => {
   const note = await runJxa(
     `const app = Application('Notes');
-    const title = "${title}"
+    const title = "${title.replace(/[\\'"]/g, "\\$&")}"
     
     try {
+        // Search for note across all folders
         const note = app.notes.whose({name: title})[0];
+        
+        if (!note) {
+            return "{}";
+        }
         
         const noteInfo = {
             title: note.name(),
@@ -298,7 +293,41 @@ export const createNotesTable = async (overrideName?: string) => {
   return { notesTable, time: performance.now() - start };
 };
 
+// Constants for folder name
+const MCP_FOLDER_NAME = "MCP Notes";
+
+/**
+ * Creates or gets the MCP folder
+ * @returns Promise that resolves to true if successful
+ */
+const getOrCreateMCPFolder = async (): Promise<boolean> => {
+  try {
+    const result = await runJxa(`
+      const app = Application('Notes');
+      
+      // Check if the folder already exists
+      const folders = Array.from(app.folders());
+      let mcpFolder = folders.find(folder => folder.name() === "${MCP_FOLDER_NAME}");
+      
+      // If not, create it
+      if (!mcpFolder) {
+        mcpFolder = app.make({new: 'folder', withProperties: {name: "${MCP_FOLDER_NAME}"}});
+      }
+      
+      return true;
+    `);
+    
+    return result as boolean;
+  } catch (error) {
+    console.error("Error creating MCP folder:", error);
+    return false;
+  }
+};
+
 const createNote = async (title: string, content: string) => {
+  // Ensure the MCP folder exists
+  await getOrCreateMCPFolder();
+  
   // Escape special characters and convert newlines to \n
   const escapedTitle = title.replace(/[\\'"]/g, "\\$&");
   const escapedContent = content
@@ -308,20 +337,58 @@ const createNote = async (title: string, content: string) => {
 
   await runJxa(`
     const app = Application('Notes');
-    const note = app.make({new: 'note', withProperties: {
+    
+    // Find the MCP folder
+    const folders = Array.from(app.folders());
+    const mcpFolder = folders.find(folder => folder.name() === "${MCP_FOLDER_NAME}");
+    
+    if (!mcpFolder) {
+      throw new Error("MCP folder not found. Please try again.");
+    }
+    
+    // Create the note in the MCP folder
+    const note = app.make({new: 'note', at: mcpFolder, withProperties: {
       name: "${escapedTitle}",
       body: "${escapedContent}"
     }});
     
-    return true
+    return true;
   `);
 
   return true;
 };
 
+const searchNotes = async (query: string) => {
+  const results = await runJxa(`
+    const app = Application('Notes');
+    const query = "${query.replace(/[\\'"]/g, "\\$&")}";
+    
+    // Search across all folders
+    const notes = Array.from(app.notes()).filter(note => {
+      const content = note.body().toLowerCase();
+      const title = note.name().toLowerCase();
+      const searchQuery = query.toLowerCase();
+      return content.includes(searchQuery) || title.includes(searchQuery);
+    }).map(note => ({
+      title: note.name(),
+      content: note.body(),
+      creation_date: note.creationDate().toLocaleString(),
+      modification_date: note.modificationDate().toLocaleString()
+    }));
+    
+    return JSON.stringify(notes);
+  `);
+
+  return JSON.parse(results as string) as {
+    title: string;
+    content: string;
+    creation_date: string;
+    modification_date: string;
+  }[];
+};
+
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
-  const { notesTable } = await createNotesTable();
   const { name, arguments: args } = request.params;
 
   try {
@@ -330,7 +397,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
       await createNote(title, content);
       return createTextResponse(`Created note "${title}" successfully.`);
     } else if (name === "list_notes") {
-      // Validate with optional parameters
       const params = RandomStringSchema.parse(args || {});
       const titles = await getNotes();
       
@@ -343,68 +409,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
         `You have ${titles.length} notes in your Apple Notes database:\n\n${formattedTitles}`
       );
     } else if (name === "get_note") {
-      try {
-        const { title } = GetNoteSchema.parse(args);
-        const note = await getNoteDetailsByTitle(title);
-        
-        if (!note.title) {
-          return createTextResponse(`Note with title "${title}" not found.`);
-        }
-        
-        // Remove only image tags from HTML content but keep other HTML tags
-        let cleanContent = cleanHtmlContent(note.content);
-        
-        const formattedNote = [
-          `# ${note.title}`,
-          `Created: ${note.creation_date || 'Unknown'}`,
-          `Modified: ${note.modification_date || 'Unknown'}`,
-          '',
-          cleanContent
-        ].join('\n');
-        
-        return createTextResponse(formattedNote);
-      } catch (error) {
-        return createTextResponse(error.message);
+      const { title } = GetNoteSchema.parse(args);
+      const note = await getNoteDetailsByTitle(title);
+      
+      if (!note.title) {
+        return createTextResponse(`Note with title "${title}" not found.`);
       }
-    } else if (name === "index_notes") {
-      // Validate with optional parameters
-      const params = RandomStringSchema.parse(args || {});
-      const { time, chunks, report, allNotes } = await indexNotes(notesTable);
-      return createTextResponse(
-        `Synchronized Apple Notes with search database: indexed ${chunks} notes in ${Math.round(time)}ms. You can now search for them using the "search_notes" tool.`
-      );
+      
+      // Remove only image tags from HTML content but keep other HTML tags
+      let cleanContent = cleanHtmlContent(note.content);
+      
+      const formattedNote = [
+        `# ${note.title}`,
+        `Created: ${note.creation_date || 'Unknown'}`,
+        `Modified: ${note.modification_date || 'Unknown'}`,
+        '',
+        cleanContent
+      ].join('\n');
+      
+      return createTextResponse(formattedNote);
     } else if (name === "search_notes") {
       const { query } = QueryNotesSchema.parse(args);
+      const results = await searchNotes(query);
       
-      // Ensure the notes table exists even if not indexed yet
-      let exists = false;
-      try {
-        // Use a more reliable method to check if table exists
-        await db.openTable("notes");
-        exists = true;
-      } catch (error) {
-        console.error("Table does not exist:", error);
-        exists = false;
-      }
-      
-      if (!exists) {
-        return createTextResponse(
-          `You need to index your notes first. Please use the "index_notes" tool before searching.`
-        );
-      }
-      
-      const combinedResults = await searchAndCombineResults(notesTable, query);
-      
-      // Format the results in a more readable way
-      if (combinedResults.length === 0) {
+      if (results.length === 0) {
         return createTextResponse(`No results found for query: "${query}"`);
       }
       
-      const formattedResults = combinedResults.map((result, index) => {
-        // Remove only image tags but keep other HTML tags
+      const formattedResults = results.map((result, index) => {
         const cleanContent = cleanHtmlContent(result.content);
-          
-        // Truncate content if it's too long
         const truncatedContent = cleanContent.length > 200 
           ? cleanContent.substring(0, 200) + '...' 
           : cleanContent;
@@ -413,20 +446,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
       }).join('\n\n');
       
       return createTextResponse(
-        `Found ${combinedResults.length} notes matching "${query}":\n\n${formattedResults}`
+        `Found ${results.length} notes matching "${query}":\n\n${formattedResults}`
       );
-    } else {
-      throw new Error(`Unknown tool: ${name}`);
     }
+    
+    return createTextResponse("Unknown tool");
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw new Error(
-        `Invalid arguments: ${error.errors
-          .map((e) => `${e.path.join(".")}: ${e.message}`)
-          .join(", ")}`
-      );
-    }
-    throw error;
+    return createTextResponse(`Error: ${error.message}`);
   }
 });
 

@@ -1,138 +1,221 @@
 // Usage: bun test --timeout 120000
 /// <reference types="bun-types" />
-import { test, describe, expect } from "bun:test";
-import * as lancedb from "@lancedb/lancedb";
-import path from "node:path";
-import os from "node:os";
-import { LanceSchema } from "@lancedb/lancedb/embedding";
-import { Utf8 } from "apache-arrow";
-import {
-  createNotesTable,
-  indexNotes,
-  OnDeviceEmbeddingFunction,
-  searchAndCombineResults,
-} from "./index";
+import { test, describe, expect, beforeAll, afterAll } from "bun:test";
+import { runJxa } from "run-jxa";
 
-describe("Apple Notes Indexing", async () => {
-  const db = await lancedb.connect(
-    path.join(os.homedir(), ".mcp-apple-notes", "data")
-  );
-  const func = new OnDeviceEmbeddingFunction();
+describe("Apple Notes Integration", () => {
+  const MCP_FOLDER_NAME = "MCP Notes";
 
-  const notesSchema = LanceSchema({
-    title: func.sourceField(new Utf8()),
-    content: func.sourceField(new Utf8()),
-    creation_date: func.sourceField(new Utf8()),
-    modification_date: func.sourceField(new Utf8()),
-    vector: func.vectorField(),
-  });
-
-  // Helper function to add test data
-  const addTestData = async (notesTable: any) => {
-    await notesTable.add([
-      {
-        id: "1",
-        title: "Test Note",
-        content: "This is a test note content",
-        creation_date: new Date().toISOString(),
-        modification_date: new Date().toISOString(),
-      },
-      {
-        id: "2",
-        title: "15/12",
-        content: "This is a test date note",
-        creation_date: new Date().toISOString(),
-        modification_date: new Date().toISOString(),
+  // Helper function to create or get MCP folder
+  const getOrCreateMCPFolder = async () => {
+    return await runJxa(`
+      const app = Application('Notes');
+      
+      // Check if the folder already exists
+      const folders = Array.from(app.folders());
+      let mcpFolder = folders.find(folder => folder.name() === "${MCP_FOLDER_NAME}");
+      
+      // If not, create it
+      if (!mcpFolder) {
+        mcpFolder = app.make({new: 'folder', withProperties: {name: "${MCP_FOLDER_NAME}"}});
       }
-    ]);
+      
+      return true;
+    `);
   };
 
-  test("should create notes table", async () => {
-    const notesTable = await db.createEmptyTable("test-notes", notesSchema, {
-      mode: "create",
-      existOk: true,
-    });
+  // Helper function to create a test note (in root folder)
+  const createTestNote = async (title: string, content: string) => {
+    await runJxa(`
+      const app = Application('Notes');
+      
+      const note = app.make({new: 'note', withProperties: {
+        name: "${title.replace(/[\\'"]/g, "\\$&")}",
+        body: "${content.replace(/[\\'"]/g, "\\$&")}"
+      }});
+    `);
+  };
 
-    // Notes table should be created
-    expect(notesTable).toBeDefined();
-    const count = await notesTable.countRows();
-    // Should be able to count rows
-    expect(typeof count).toBe("number");
+  // Helper function to create a test note in MCP folder
+  const createTestNoteInMCPFolder = async (title: string, content: string) => {
+    await getOrCreateMCPFolder();
+    
+    await runJxa(`
+      const app = Application('Notes');
+      
+      // Find the MCP folder
+      const folders = Array.from(app.folders());
+      const mcpFolder = folders.find(folder => folder.name() === "${MCP_FOLDER_NAME}");
+      
+      if (!mcpFolder) {
+        throw new Error("MCP folder not found");
+      }
+      
+      // Create note in the MCP folder
+      const note = app.make({new: 'note', at: mcpFolder, withProperties: {
+        name: "${title.replace(/[\\'"]/g, "\\$&")}",
+        body: "${content.replace(/[\\'"]/g, "\\$&")}"
+      }});
+    `);
+  };
+
+  // Helper function to delete a test note
+  const deleteTestNote = async (title: string) => {
+    await runJxa(`
+      const app = Application('Notes');
+      
+      // Find and delete the note across all folders
+      const note = app.notes.whose({name: "${title.replace(/[\\'"]/g, "\\$&")}"})[0];
+      if (note) {
+        note.delete();
+      }
+    `);
+  };
+
+  // Clean up test notes before and after tests
+  beforeAll(async () => {
+    await deleteTestNote("Test Note");
+    await deleteTestNote("Another Test Note");
+    await deleteTestNote("MCP Test Note");
   });
 
-  // Note: This test requires a very long timeout due to indexing operations
-  // Run with: bun test --timeout 120000 (2 minutes)
-  test("should index all notes correctly", async () => {
-    console.log("Starting notes indexing test...");
-    
-    const startTableCreation = performance.now();
-    const { notesTable, time: tableCreationTime } = await createNotesTable("test-notes");
-    console.log(`Table creation took ${Math.round(tableCreationTime)}ms`);
-
-    // Add test data to ensure we have something to work with
-    console.log("Adding test data before indexing...");
-    await addTestData(notesTable);
-    
-    // Get the count before indexing
-    const beforeCount = await notesTable.countRows();
-    console.log(`Table contains ${beforeCount} rows before indexing`);
-
-    console.log("Beginning notes indexing process...");
-    const startIndexing = performance.now();
-    const indexResult = await indexNotes(notesTable);
-    const endIndexing = performance.now();
-    
-    console.log(`Indexing completed in ${Math.round(endIndexing - startIndexing)}ms`);
-    console.log(`Found ${indexResult.allNotes} notes, indexed ${indexResult.chunks} chunks`);
-    
-    if (indexResult.report) {
-      console.log("Indexing report:", indexResult.report);
-    }
-
-    const count = await notesTable.countRows();
-    console.log(`Table contains ${count} rows after indexing`);
-    
-    // Should be able to count rows
-    expect(typeof count).toBe("number");
-    
-    // Check that we have at least the test data or the actual notes (if there are any)
-    expect(count).toBeGreaterThan(0);
+  afterAll(async () => {
+    await deleteTestNote("Test Note");
+    await deleteTestNote("Another Test Note");
+    await deleteTestNote("MCP Test Note");
   });
 
-  test("should perform vector search", async () => {
-    const start = performance.now();
-    const { notesTable, time: tableCreationTime } = await createNotesTable("test-notes");
-    const end = performance.now();
-    console.log(`Creating table took ${Math.round(end - start)}ms`);
+  test("should list notes from all folders", async () => {
+    // Create test notes in different locations
+    await createTestNote("Test Note", "This is a test note content");
+    await createTestNoteInMCPFolder("MCP Test Note", "This is a test note in MCP folder");
 
-    await addTestData(notesTable);
+    // Get all notes
+    const notes = await runJxa(`
+      const app = Application('Notes');
+      const notes = Array.from(app.notes());
+      const titles = notes.map(note => note.properties().name);
+      return titles;
+    `) as string[];
 
-    const addEnd = performance.now();
-    console.log(`Adding notes took ${Math.round(addEnd - end)}ms`);
-
-    const results = await searchAndCombineResults(notesTable, "test note");
-
-    const combineEnd = performance.now();
-    console.log(`Combining results took ${Math.round(combineEnd - addEnd)}ms`);
-
-    // Should return search results
-    expect(results.length).toBeGreaterThan(0);
-    // Check that one of our test notes is found (order may vary)
-    const foundTestNote = results.some(r => r.title === "Test Note" || r.title === "15/12");
-    expect(foundTestNote).toBe(true);
+    // Verify both test notes exist
+    expect(Array.isArray(notes)).toBe(true);
+    expect(notes.includes("Test Note")).toBe(true);
+    expect(notes.includes("MCP Test Note")).toBe(true);
   });
 
-  test("should perform vector search on real indexed data", async () => {
-    const { notesTable } = await createNotesTable("test-notes");
+  test("should get note details from any folder", async () => {
+    const testContent = "This is a test note content";
+    await createTestNote("Test Note", testContent);
+
+    const note = await runJxa(`
+      const app = Application('Notes');
+      const note = app.notes.whose({name: "Test Note"})[0];
+      
+      if (!note) {
+        return "{}";
+      }
+      
+      const noteInfo = {
+        title: note.name(),
+        content: note.body(),
+        creation_date: note.creationDate().toLocaleString(),
+        modification_date: note.modificationDate().toLocaleString()
+      };
+      
+      return JSON.stringify(noteInfo);
+    `);
+
+    const noteDetails = JSON.parse(note as string);
+    expect(noteDetails.title).toBe("Test Note");
+    expect(noteDetails.content).toContain(testContent);
+    expect(noteDetails.creation_date).toBeDefined();
+    expect(noteDetails.modification_date).toBeDefined();
+  });
+
+  test("should search notes across all folders", async () => {
+    // Create test notes in different locations
+    await createTestNote("Test Note", "This is a test note content");
+    await createTestNoteInMCPFolder("MCP Test Note", "This note has unique content");
+
+    // Search for notes
+    const results = await runJxa(`
+      const app = Application('Notes');
+      const query = "unique content";
+      
+      // Search across all folders
+      const notes = Array.from(app.notes()).filter(note => {
+        const content = note.body().toLowerCase();
+        const title = note.name().toLowerCase();
+        const searchQuery = query.toLowerCase();
+        return content.includes(searchQuery) || title.includes(searchQuery);
+      }).map(note => ({
+        title: note.name(),
+        content: note.body(),
+        creation_date: note.creationDate().toLocaleString(),
+        modification_date: note.modificationDate().toLocaleString()
+      }));
+      
+      return JSON.stringify(notes);
+    `);
+
+    const searchResults = JSON.parse(results as string);
+    expect(searchResults.length).toBeGreaterThan(0);
+    expect(searchResults[0].title).toBe("MCP Test Note");
+    expect(searchResults[0].content).toContain("unique content");
+  });
+
+  test("should create new note in MCP folder", async () => {
+    const title = "MCP Test Note";
+    const content = "This is a test note in MCP folder";
+
+    await runJxa(`
+      const app = Application('Notes');
+      
+      // Find the MCP folder
+      const folders = Array.from(app.folders());
+      const mcpFolder = folders.find(folder => folder.name() === "${MCP_FOLDER_NAME}");
+      
+      if (!mcpFolder) {
+        throw new Error("MCP folder not found");
+      }
+      
+      // Create note in the MCP folder
+      const note = app.make({new: 'note', at: mcpFolder, withProperties: {
+        name: "${title}",
+        body: "${content}"
+      }});
+    `);
+
+    // Verify the note was created in MCP folder
+    const noteInMCPFolder = await runJxa(`
+      const app = Application('Notes');
+      
+      // Find the MCP folder
+      const folders = Array.from(app.folders());
+      const mcpFolder = folders.find(folder => folder.name() === "${MCP_FOLDER_NAME}");
+      
+      if (!mcpFolder) {
+        return false;
+      }
+      
+      // Check if note exists in MCP folder
+      const notes = Array.from(mcpFolder.notes());
+      return notes.some(note => note.name() === "${title}");
+    `);
+
+    expect(noteInMCPFolder).toBe(true);
+  });
+
+  test("MCP folder should exist", async () => {
+    await getOrCreateMCPFolder();
     
-    // Add test data to ensure we have something to search for
-    await addTestData(notesTable);
-
-    const results = await searchAndCombineResults(notesTable, "15/12");
-
-    // Should return search results
-    expect(results.length).toBeGreaterThan(0);
-    // There should be a note with this title
-    expect(results.some(r => r.title === "15/12")).toBe(true);
+    const folderExists = await runJxa(`
+      const app = Application('Notes');
+      const folders = Array.from(app.folders());
+      return folders.some(folder => folder.name() === "${MCP_FOLDER_NAME}");
+    `);
+    
+    expect(folderExists).toBe(true);
   });
 });

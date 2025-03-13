@@ -2,17 +2,17 @@
 
 ![MCP Apple Notes](./images/logo.png)
 
-A [Model Context Protocol (MCP)](https://www.anthropic.com/news/model-context-protocol) server that enables semantic search and RAG (Retrieval Augmented Generation) over your Apple Notes. This allows AI assistants like Claude to search and reference your Apple Notes during conversations.
+A [Model Context Protocol (MCP)](https://www.anthropic.com/news/model-context-protocol) server that enables AI assistants like Claude to search and interact with your Apple Notes during conversations.
 
 ![MCP Apple Notes](./images/demo.png)
 
 ## Features
 
-- 🔍 Semantic search over Apple Notes using [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) on-device embeddings model
-- 📝 Full-text search capabilities
-- 📊 Vector storage using [LanceDB](https://lancedb.github.io/lancedb/)
-- 🤖 MCP-compatible server for AI assistant integration
+- 🔍 Native Apple Notes search integration across all notes
+- 📝 Full access to note content and metadata from all folders
 - 🍎 Native Apple Notes integration via JXA
+- 🤖 MCP-compatible server for AI assistant integration
+- 📁 Created notes are organized in a dedicated "MCP Notes" folder
 - 🏃‍♂️ Fully local execution - no API keys needed
 
 ## Prerequisites
@@ -84,7 +84,11 @@ bunx git+https://github.com/sunfmin/mcp-apple-notes
 ## Getting Started
 
 1. Restart Claude desktop app or Cursor. You should see a connection status indicator.
-2. Start by indexing your notes. Ask Claude to index your notes by saying something like: "Index my notes" or "Index my Apple Notes".
+2. Start using your notes! You can:
+   - List all your notes (from all folders)
+   - Search through your notes (across all folders)
+   - View note contents
+   - Create new notes (will be placed in the "MCP Notes" folder)
 
 ## Troubleshooting
 
@@ -99,7 +103,6 @@ tail -n 50 -f ~/Library/Logs/Claude/mcp.log
 ## Todos
 
 - [ ] Apple notes are returned in the HTML format. We should turn them to Markdown and embed that
-- [ ] Chunk source content using recursive text splitter or markdown text splitter
-- [ ] Add an option to use custom embeddings model
-- [ ] More control over DB - purge, custom queries, etc.
-- [x] Storing notes in Notes via Claude
+- [ ] Add support for note attachments and images
+- [x] Organize notes in a dedicated folder
+- [ ] Add support for note deletion and updates
