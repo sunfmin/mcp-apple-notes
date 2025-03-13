@@ -141,6 +141,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["title", "content"],
         },
       },
+      {
+        name: "store_memory",
+        description:
+          "Store a memory/context in Apple Notes to be used by AI assistants. The memory will be saved in the 'AI Memories' folder.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            content: { type: "string" },
+            tags: { type: "string", description: "Comma-separated tags to categorize this memory" },
+          },
+          required: ["title", "content"],
+        },
+      },
+      {
+        name: "retrieve_memory",
+        description:
+          "Retrieve memories from Apple Notes that match the given query. This searches within the 'AI Memories' folder.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            limit: { type: "number", description: "Maximum number of memories to retrieve" },
+          },
+          required: ["query"],
+        },
+      },
     ],
   };
 });
@@ -293,8 +320,9 @@ export const createNotesTable = async (overrideName?: string) => {
   return { notesTable, time: performance.now() - start };
 };
 
-// Constants for folder name
+// Constants for folder names
 const MCP_FOLDER_NAME = "MCP Notes";
+const AI_MEMORIES_FOLDER_NAME = "AI Memories";
 
 /**
  * Creates or gets the MCP folder
@@ -439,6 +467,215 @@ const searchNotes = async (query: string) => {
   }[];
 };
 
+// Add schema for new functions
+const StoreMemorySchema = z.object({
+  title: z.string(),
+  content: z.string(),
+  tags: z.string().optional(),
+});
+
+const RetrieveMemorySchema = z.object({
+  query: z.string(),
+  limit: z.number().optional(),
+});
+
+// Function to get or create the AI Memories folder
+const getOrCreateAIMemoriesFolder = async (): Promise<boolean> => {
+  return await runJxa(`
+    const app = Application('Notes');
+    app.includeStandardAdditions = true;
+    
+    // Look for existing AI Memories folder
+    const folders = app.folders;
+    let aiMemoriesFolder = null;
+    
+    for (let i = 0; i < folders.length; i++) {
+      if (folders[i].name() === '${AI_MEMORIES_FOLDER_NAME}') {
+        aiMemoriesFolder = folders[i];
+        break;
+      }
+    }
+    
+    // If folder doesn't exist, create it
+    if (!aiMemoriesFolder) {
+      try {
+        app.make({new: 'folder', withProperties: {name: '${AI_MEMORIES_FOLDER_NAME}'}});
+        return true;
+      } catch (error) {
+        console.error('Failed to create AI Memories folder:', error);
+        return false;
+      }
+    }
+    
+    return true;
+  `);
+};
+
+// Function to store a memory in the AI Memories folder
+const storeMemory = async (title: string, content: string, tags?: string) => {
+  // First, ensure the AI Memories folder exists
+  const folderExists = await getOrCreateAIMemoriesFolder();
+  if (!folderExists) {
+    throw new Error("Failed to create or access the AI Memories folder");
+  }
+
+  // Format the content with tags if provided
+  let formattedContent = content;
+  if (tags) {
+    formattedContent = `<div><strong>Tags:</strong> ${tags}</div><div><br></div>${content}`;
+  }
+
+  // Create the memory note
+  const resultString = await runJxa(`
+    const app = Application('Notes');
+    app.includeStandardAdditions = true;
+    
+    try {
+      // Find the AI Memories folder
+      const aiMemoriesFolder = app.folders.whose({name: '${AI_MEMORIES_FOLDER_NAME}'})[0];
+      
+      if (!aiMemoriesFolder) {
+        return JSON.stringify({
+          success: false,
+          error: "AI Memories folder not found"
+        });
+      }
+      
+      // Create the note with the provided title and content
+      const note = app.make({
+        new: 'note', 
+        withProperties: {
+          name: "${title.replace(/[\\'"]/g, "\\$&")}", 
+          body: "${formattedContent.replace(/[\\'"]/g, "\\$&")}"
+        }, 
+        at: aiMemoriesFolder
+      });
+      
+      return JSON.stringify({
+        success: true,
+        noteId: note.id()
+      });
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        error: error.toString()
+      });
+    }
+  `);
+
+  return JSON.parse(resultString as string) as {
+    success: boolean;
+    noteId?: string;
+    error?: string;
+  };
+};
+
+// Function to search for memories within the AI Memories folder
+const retrieveMemories = async (query: string, limit = 5) => {
+  // Ensure the AI Memories folder exists
+  const folderExists = await getOrCreateAIMemoriesFolder();
+  if (!folderExists) {
+    throw new Error("Failed to access the AI Memories folder");
+  }
+
+  // Search for memories matching the query
+  const results = await runJxa(`
+    const app = Application('Notes');
+    app.includeStandardAdditions = true;
+    
+    // Use System Events for UI automation
+    const systemEvents = Application('System Events');
+    const notesProcess = systemEvents.processes.whose({name: 'Notes'})[0];
+    
+    // Activate Notes app
+    app.activate();
+    
+    // Find the AI Memories folder and select it
+    const aiMemoriesFolder = app.folders.whose({name: '${AI_MEMORIES_FOLDER_NAME}'})[0];
+    if (!aiMemoriesFolder) {
+      return JSON.stringify({
+        success: false,
+        error: "AI Memories folder not found"
+      });
+    }
+    
+    // Select the AI Memories folder
+    aiMemoriesFolder.show();
+    delay(0.5);
+    
+    // Escape the query for safe insertion into script
+    const searchQuery = "${query.replace(/[\\'"]/g, "\\$&")}";
+    
+    try {
+      // Clear any existing search first (to ensure clean state)
+      // Press Command+F to focus search field
+      systemEvents.keyCode(3, {using: ['command down']});
+      delay(0.2);
+      
+      // Clear the search field with Escape key
+      systemEvents.keyCode(53);
+      delay(0.2);
+      
+      // Press Command+F again
+      systemEvents.keyCode(3, {using: ['command down']});
+      delay(0.3);
+      
+      // Type the search query
+      systemEvents.keystroke(searchQuery);
+      delay(1); // Give more time for search to complete
+      
+      // Get visible notes after search
+      const searchResults = [];
+      
+      // Get all notes in the AI Memories folder
+      const allNotes = aiMemoriesFolder.notes();
+      const limit = ${limit};
+      
+      // Filter notes based on the search results
+      for (let i = 0; i < allNotes.length; i++) {
+        try {
+          const note = allNotes[i];
+          const noteContent = note.body();
+          const noteTitle = note.name();
+          
+          // Check if note contains the search query in title or content
+          if (noteTitle.toLowerCase().includes(searchQuery.toLowerCase()) || 
+              noteContent.toLowerCase().includes(searchQuery.toLowerCase())) {
+            searchResults.push({
+              title: noteTitle,
+              content: noteContent,
+              creation_date: note.creationDate().toLocaleString(),
+              modification_date: note.modificationDate().toLocaleString()
+            });
+            
+            // Limit the number of results
+            if (searchResults.length >= limit) {
+              break;
+            }
+          }
+        } catch (noteError) {
+          console.log("Error processing note:", noteError);
+        }
+      }
+      
+      return JSON.stringify({
+        success: true,
+        results: searchResults
+      });
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        error: error.toString()
+      });
+    } finally {
+      // Press Escape to clear search
+      systemEvents.keyCode(53);
+    }
+  `);
+
+  return JSON.parse(results as string);
+};
+
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
   const { name, arguments: args } = request.params;
@@ -499,6 +736,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request, c) => {
       
       return createTextResponse(
         `Found ${results.length} notes matching "${query}":\n\n${formattedResults}`
+      );
+    } else if (name === "store_memory") {
+      const { title, content, tags } = StoreMemorySchema.parse(args);
+      const result = await storeMemory(title, content, tags);
+      
+      if (result && result.success) {
+        return createTextResponse(`Memory "${title}" stored successfully in AI Memories.`);
+      } else {
+        return createTextResponse(`Failed to store memory: ${result?.error || "Unknown error"}`);
+      }
+    } else if (name === "retrieve_memory") {
+      const { query, limit } = RetrieveMemorySchema.parse(args);
+      const results = await retrieveMemories(query, limit || 5);
+      
+      if (!results.success) {
+        return createTextResponse(`Failed to retrieve memories: ${results.error}`);
+      }
+      
+      if (results.results.length === 0) {
+        return createTextResponse(`No memories found matching query: "${query}"`);
+      }
+      
+      const formattedResults = results.results.map((result, index) => {
+        const cleanContent = cleanHtmlContent(result.content);
+        const truncatedContent = cleanContent.length > 200 
+          ? cleanContent.substring(0, 200) + '...' 
+          : cleanContent;
+          
+        return `${index + 1}. **${result.title || 'Untitled'}**\n   ${truncatedContent}`;
+      }).join('\n\n');
+      
+      return createTextResponse(
+        `Found ${results.results.length} memories matching "${query}":\n\n${formattedResults}`
       );
     }
     
