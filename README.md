@@ -18,14 +18,24 @@ A [Model Context Protocol (MCP)](https://www.anthropic.com/news/model-context-pr
 ## Prerequisites
 
 - [Bun](https://bun.sh/docs/installation)
-- [Claude Desktop](https://claude.ai/download)
+- [Claude Desktop](https://claude.ai/download) or [Cursor](https://cursor.sh/)
 
 ## Installation
+
+### Option 1: Direct from GitHub (Recommended)
+
+You can install and run the MCP server directly using Bun's package execution feature:
+
+```bash
+bunx git+https://github.com/sunfmin/mcp-apple-notes
+```
+
+### Option 2: Manual Installation
 
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/RafalWilinski/mcp-apple-notes
+git clone https://github.com/sunfmin/mcp-apple-notes
 cd mcp-apple-notes
 ```
 
@@ -35,7 +45,13 @@ cd mcp-apple-notes
 bun install
 ```
 
-## Usage
+3. Run the server:
+
+```bash
+bun start
+```
+
+## Usage with Claude Desktop
 
 1. Open Claude desktop app and go to Settings -> Developer -> Edit Config
 
@@ -48,7 +64,7 @@ bun install
   "mcpServers": {
     "local-machine": {
       "command": "/Users/<YOUR_USER_NAME>/.bun/bin/bun",
-      "args": ["/Users/<YOUR_USER_NAME>/apple-notes-mcp/index.ts"]
+      "args": ["x", "git+https://github.com/sunfmin/mcp-apple-notes"]
     }
   }
 }
@@ -56,11 +72,19 @@ bun install
 
 Important: Replace `<YOUR_USER_NAME>` with your actual username.
 
-3. Restart Claude desktop app. You should see this:
+## Usage with Cursor
 
-![Claude MCP Connection Status](./images/verify_installation.png)
+1. Open Cursor and go to Settings -> Claude AI MCP
+2. Add the following command:
 
-4. Start by indexing your notes. Ask Claude to index your notes by saying something like: "Index my notes" or "Index my Apple Notes".
+```
+bunx git+https://github.com/sunfmin/mcp-apple-notes
+```
+
+## Getting Started
+
+1. Restart Claude desktop app or Cursor. You should see a connection status indicator.
+2. Start by indexing your notes. Ask Claude to index your notes by saying something like: "Index my notes" or "Index my Apple Notes".
 
 ## Troubleshooting
 

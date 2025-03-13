@@ -4,9 +4,12 @@
   "author": "",
   "type": "module",
   "main": "index.ts",
-  "description": "",
-  "keywords": [],
+  "description": "MCP server that enables AI assistants to access Apple Notes",
+  "keywords": ["mcp", "apple-notes", "claude", "cursor", "ai", "rag"],
   "license": "ISC",
+  "bin": {
+    "mcp-apple-notes": "./bin.js"
+  },
   "scripts": {
     "build": "bun build index.ts --outdir dist --target node",
     "start": "bun index.ts",
